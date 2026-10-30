@@ -1,5 +1,7 @@
 # Jais Voice Chatbot — Arabic real-time voice assistant 🇸🇦🎙️
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/911houssem/jais-voice-chatbot/blob/main/notebooks/jais_voice_chatbot_colab.ipynb)
+
 **EN** | **عربي (بالعربية أدناه)**
 
 A fully open, **self-hosted Arabic voice chatbot** built on [pipecat](https://github.com/pipecat-ai/pipecat) with Saudi-made open models:
