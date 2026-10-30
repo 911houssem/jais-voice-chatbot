@@ -1,0 +1,21 @@
+# Pipecat (runner + WebRTC transport + Silero VAD; pulls pipecat-ai-prebuilt UI)
+pipecat-ai[webrtc,silero,runner]==1.15.0
+
+# PyTorch: Colab already ships a CUDA build; pick your own on bare metal.
+# torch>=2.6
+
+# Jais-ASR (transformers 5.16+ required by the model card), accelerate for device_map
+transformers>=5.16.1,<6
+accelerate>=0.34
+soundfile>=0.12
+soxr>=0.5
+
+# Compressed-tensors: needed by the W4A16-AWQ Jais-ASR checkpoint (small GPUs / T4)
+compressed-tensors>=0.10
+
+# Audar-TTS: NeuCodec decoder used by audarai/Audar-TTS-V1-Flash
+neucodec>=0.2
+
+#numpy>=1.26
+#loguru (pipecat dep)
+python-dotenv>=1.0
