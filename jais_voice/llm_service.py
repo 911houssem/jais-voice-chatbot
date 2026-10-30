@@ -129,13 +129,21 @@ class JaisLLMService(LLMService):
     # -- generation helpers --------------------------------------------- #
 
     def _trim_messages(self, context: LLMContext) -> list[dict]:
-        """Keep system/developer messages plus the latest N user/assistant turns."""
+        """Keep system-like messages plus the latest N user/assistant turns."""
         keep = self._hub.config.llm.max_context_messages
         messages = [
             m if isinstance(m, Mapping) else dict(m) for m in context.get_messages()
         ]
-        system = [m for m in messages if m.get("role") in ("system", "developer")]
-        rest = [m for m in messages if m.get("role") not in ("system", "developer")]
+        # Jais-3's chat template accepts system/user/assistant; pipecat uses the
+        # "developer" role for instructions, so normalize before templating.
+        system = []
+        rest = []
+        for m in messages:
+            if m.get("role") in ("system", "developer"):
+                m = {**m, "role": "system"}
+                system.append(m)
+            else:
+                rest.append(m)
         return system + rest[-keep:] if system else rest[-keep:]
 
     def _build_inputs(self, tokenizer, messages: list[dict], device):

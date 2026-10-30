@@ -45,12 +45,6 @@ class JaisAudarTTSService(TTSService):
     def can_generate_metrics(self) -> bool:
         return True
 
-    async def start(self, frame):
-        """Load TTS + prepare the reference voice before the first synthesis."""
-        await super().start(frame)
-        await self._hub.prepare_tts_voice()
-        self._voice_ready = True
-
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         """Synthesize ``text`` and yield audio frames."""
         try:

@@ -14,7 +14,7 @@ soxr>=0.5
 compressed-tensors>=0.10
 
 # Audar-TTS: NeuCodec decoder used by audarai/Audar-TTS-V1-Flash
-neucodec>=0.2
+neucodec
 
 #numpy>=1.26
 #loguru (pipecat dep)

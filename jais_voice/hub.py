@@ -67,11 +67,13 @@ class ModelHub:
         self._tts = None
         self._ref_codes = None
         self._ref_text = None
+        self._warmed_up = False
         self._locks = {
             "asr": asyncio.Lock(),
             "llm": asyncio.Lock(),
             "tts": asyncio.Lock(),
         }
+        self._ref_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ #
     # Device / dtype helpers
@@ -152,11 +154,23 @@ class ModelHub:
                 processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
                 if getattr(processor, "tokenizer", None) is not None:
                     processor.tokenizer.padding_side = "left"
-                model = AutoModelForCausalLM.from_pretrained(
-                    repo,
-                    trust_remote_code=True,
+                model_kwargs = {
+                    "trust_remote_code": True,
                     **({"dtype": dtype} if dtype is not None else {}),
-                ).to(self.config.asr.device)
+                }
+                try:
+                    # Quantized checkpoints must stay compressed, otherwise
+                    # transformers decompresses them (~11 GB -> OOM on 16 GB).
+                    if dtype is None:
+                        model = AutoModelForCausalLM.from_pretrained(
+                            repo, run_compressed=True, **model_kwargs
+                        )
+                    else:
+                        model = AutoModelForCausalLM.from_pretrained(repo, **model_kwargs)
+                except (TypeError, ValueError):
+                    logger.warning("run_compressed=True rejected by transformers; retrying")
+                    model = AutoModelForCausalLM.from_pretrained(repo, **model_kwargs)
+                model = model.to(self.config.asr.device)
                 model.eval()
                 return model, processor
 
@@ -362,24 +376,26 @@ class ModelHub:
         """Encode the reference clip once; bootstrap its transcript via ASR.
 
         The official voice registry ships clips without transcripts, so we
-        transcribe the reference clip with the already-loaded Jais-ASR model.
+        transcribe the reference clip with the loaded Jais-ASR model — through
+        the same locked ``transcribe()`` path used for user speech.
         """
         if self._ref_codes is not None:
             return
-        await self.load_tts()
-        # ASR is needed to bootstrap the reference transcript.
-        if not self.config.tts.ref_text:
-            await self.load_asr()
+        async with self._ref_lock:
+            if self._ref_codes is not None:  # raced during download/encode
+                return
+            cfg = self.config.tts
 
-        def _prepare():
-            path = self._resolve_ref_path()
-            wav = self._load_ref_wav(path)
+            def _prepare_wav():
+                return self._load_ref_wav(self._resolve_ref_path())
+
+            wav = await asyncio.to_thread(_prepare_wav)
             # Transcript: env override wins, otherwise ASR bootstrap.
-            if self.config.tts.ref_text:
-                text = self.config.tts.ref_text.strip()
+            if cfg.ref_text:
+                text = cfg.ref_text.strip()
             else:
                 logger.info("Bootstrapping reference transcript with Jais-ASR...")
-                result = self._transcribe_sync(wav, 16000)
+                result = await self.transcribe(wav, 16000)
                 if result is None:
                     raise RuntimeError(
                         "Could not transcribe the reference clip. Provide the "
@@ -387,17 +403,15 @@ class ModelHub:
                         "via JAIS_TTS_REF_WAV)."
                     )
                 text = result.text
-            _model, _tok, codec = self._tts
-            codes = self._encode_reference(codec, wav)
-            return codes, text
-
-        self._ref_codes, self._ref_text = await asyncio.to_thread(_prepare)
-        logger.info(
-            "TTS reference ready (voice=%s, %d codes, transcript: %r)",
-            self.config.tts.voice,
-            len(self._ref_codes),
-            self._ref_text[:60],
-        )
+            codec = (await self.load_tts())[2]
+            self._ref_codes = await asyncio.to_thread(self._encode_reference, codec, wav)
+            self._ref_text = text
+            logger.info(
+                "TTS reference ready (voice=%s, %d codes, transcript: %r)",
+                cfg.voice,
+                len(self._ref_codes),
+                self._ref_text[:60],
+            )
 
     @staticmethod
     def _encode_reference(codec, wav_16k: np.ndarray) -> list[int]:
@@ -406,42 +420,23 @@ class ModelHub:
         return codec.encode_code(wav.to(device)).squeeze().tolist()
 
     async def prepare_tts_voice(self):
-        """Public hook used by the TTS service on start."""
+        """Public hook used by the TTS service before first synthesis."""
         await self.tts_ready()
 
-    def _transcribe_sync(self, waveform: np.ndarray, sample_rate: int):
-        """Synchronous one-shot transcription used at startup."""
-        # Reuses load_asr() results; safe because we're already in a thread.
-        if self._asr is None:
-            return None
-        model, processor = self._asr
-        tokenizer = getattr(processor, "tokenizer", None) or processor
-        prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": [{"type": "audio"}]}],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = processor(
-            text=[prompt],
-            audio=[waveform],
-            sampling_rate=[sample_rate],
-            padding=True,
-            return_tensors="pt",
-        ).to(model.device)
-        output = model.generate(**inputs, do_sample=False, max_new_tokens=256)
-        result = processor.post_process_transcription(
-            output, input_lengths=inputs["input_ids"].shape[1]
-        )
-        if isinstance(result, dict):
-            text = result.get("text") or ""
-        else:
-            text = getattr(result, "text", "") or ""
-        text = (text or "").strip()
-        if not text or text == _NO_TRANSCRIPT_MARKER:
-            return None
-        return TranscriptionResult(text=text)
+    async def warmup(self):
+        """Preload every model + voice reference (background in app.py)."""
+        await self.load_tts()
+        await self.load_llm()
+        await self.load_asr()
+        await self._ensure_ref_codes()
+        self._warmed_up = True
+        try:
+            free, _total = torch.cuda.mem_get_info()
+            logger.info("Warm-up complete; VRAM free %.1f GB", free / (1024**3))
+        except Exception:
+            pass
 
     async def tts_ready(self):
         """Load TTS models + reference, keeping things ordered."""
-        _, _, _ = await self.load_tts()
+        await self.load_tts()
         await self._ensure_ref_codes()

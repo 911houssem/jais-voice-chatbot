@@ -14,7 +14,8 @@ Run:
 
 from __future__ import annotations
 
-import os
+import asyncio
+import threading
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -48,20 +49,59 @@ transport_params = {
 
 # Models survive across browser connections; reload only on bot restart.
 _SHARED_HUB: ModelHub | None = None
+_HUB_LOCK = threading.Lock()
+
+
+def _get_hub(config: JaisConfig) -> ModelHub:
+    """One ModelHub per process, so models survive/reuse across connections."""
+    global _SHARED_HUB
+    with _HUB_LOCK:
+        if _SHARED_HUB is None:
+            _SHARED_HUB = ModelHub(config)
+    return _SHARED_HUB
+
+
+async def _warm_in_loop(hub: ModelHub) -> None:
+    """Warm-up fallback running on the server's event loop."""
+    try:
+        await hub.warmup()
+        logger.info("Model warm-up (server loop) finished")
+    except Exception as e:
+        logger.warning("Model warm-up failed: {}", e)
+
+
+def _background_preload() -> None:
+    """Load all models + voice reference while the server is booting.
+
+    Colab users click Connect within seconds; without this the first
+    connection would block for minutes on model load. The hub singleton
+    is shared, so the pipeline reuses whatever this thread already loaded.
+    """
+    global _SHARED_HUB
+    config = JaisConfig.from_env()
+    hub = _get_hub(config)
+    try:
+        asyncio.run(hub.warmup())
+        logger.info("Background model warm-up finished")
+    except Exception as e:
+        # Fall through to the services' lazy loading path.
+        logger.warning("Background model warm-up failed: {}", e)
 
 
 async def bot(runner_args: RunnerArguments):
     """Main bot entrypoint called by the pipecat runner on every connection."""
-    global _SHARED_HUB
     config = JaisConfig.from_env()
-    if _SHARED_HUB is None:
-        _SHARED_HUB = ModelHub(config)
+    hub = _get_hub(config)
+
+    # Kick a warm-up in the background if the module-level one hasn't run yet
+    # (e.g. the bot was imported after the server booted).
+    if not hub._warmed_up:
+        asyncio.get_running_loop().create_task(_warm_in_loop(hub))
 
     from jais_voice.asr_service import JaisASRService
     from jais_voice.llm_service import JaisLLMService
     from jais_voice.tts_service import JaisAudarTTSService
 
-    hub = _SHARED_HUB
     transport: BaseTransport = await create_transport(runner_args, transport_params)
 
     stt = JaisASRService(hub=hub)
@@ -96,6 +136,10 @@ async def bot(runner_args: RunnerArguments):
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
+        # Long model loads + slow T4 turns must not trip the watchdogs.
+        setup_timeout_secs=600.0,
+        start_timeout_secs=600.0,
+        idle_timeout_secs=None,  # silence should not kill the bot
     )
 
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
@@ -117,6 +161,9 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
+    # Warm the GPU models while uvicorn boots, so the first Connect is fast.
+    threading.Thread(target=_background_preload, daemon=True).start()
+
     from pipecat.runner.run import main
 
     main()
