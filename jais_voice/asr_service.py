@@ -80,10 +80,10 @@ class JaisASRService(SegmentedSTTService):
 
         logger.debug("Transcription: [{}]", result.text)
         yield TranscriptionFrame(
-            result.text,
-            self._user_id,
-            time_now_iso8601(),
-            Language.AR,
+            text=result.text,
+            user_id=self._user_id,
+            timestamp=time_now_iso8601(),
+            language=Language.AR,
         )
 
 
