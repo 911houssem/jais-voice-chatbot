@@ -1,21 +1,29 @@
-# Pipecat (runner + WebRTC transport + Silero VAD; pulls pipecat-ai-prebuilt UI)
-pipecat-ai[webrtc,silero,runner]==1.15.0
+# Pipecat (runner + WebRTC transport + bundled Silero VAD; pulls pipecat-ai-prebuilt UI)
+pipecat-ai[webrtc,runner]==1.15.0
 
 # PyTorch: Colab already ships a CUDA build; pick your own on bare metal.
 # torch>=2.6
+torchaudio>=2.6
 
-# Jais-ASR (transformers 5.16+ required by the model card), accelerate for device_map
+# Jais-ASR (transformers >=5.16.1 required by the model card), accelerate for device_map
 transformers>=5.16.1,<6
-accelerate>=0.34
+accelerate>=1.0
 soundfile>=0.12
 soxr>=0.5
 
 # Compressed-tensors: needed by the W4A16-AWQ Jais-ASR checkpoint (small GPUs / T4)
 compressed-tensors>=0.10
 
-# Audar-TTS: NeuCodec decoder used by audarai/Audar-TTS-V1-Flash
-neucodec
+# Runtime deps of NeuCodec (the TTS codec) — light, safe to resolve normally.
+einops>=0.8
+local-attention>=1.11
+vector-quantize-pytorch==1.17.8
 
-#numpy>=1.26
-#loguru (pipecat dep)
 python-dotenv>=1.0
+
+# NeuCodec (TTS codec, REQUIRED) is intentionally NOT listed here:
+#   pip install --no-deps neucodec==0.0.6
+# Installing it with deps would drag torchao/torchdata/datasets (torchtune's
+# stack), which breaks resolution on some environments. ``from torchtune.modules
+# import RotaryPositionalEmbeddings`` is satisfied by the BSD-stub under
+# jais_voice/_vendor/torchtune (path inserted by jais_voice.hub).

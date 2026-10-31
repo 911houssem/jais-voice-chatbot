@@ -31,6 +31,7 @@ Everything runs locally on one GPU (a Colab **T4 16 GB** is enough), the browser
 git clone <this-repo> && cd jais-voice-chatbot
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt torch               # torch: pick your CUDA wheel
+pip install --no-deps neucodec==0.0.6               # TTS codec (torchtune is stubbed, see _vendor)
 cp .env.example .env                                # optional tweaks
 
 python app.py -t webrtc
@@ -112,9 +113,14 @@ Complete list with defaults lives in `.env.example`. Highlights:
 ## التشغيل محلياً
 ```bash
 pip install -r requirements.txt
+pip install --no-deps neucodec==0.0.6
 python app.py -t webrtc
 # ثم افتح http://localhost:8080/client وتكلم بالعربية 🎙️
 ```
+> لماذا `--no-deps`؟ حزمة `neucodec` تعتمد على `torchtune`/`torchao` — مكدس ثقيل
+> متشابك الإصدارات يكسر الحل عند pip. الغالب الوحيد الذي تستورده هو واجهة
+> `RotaryPositionalEmbeddings`، وهو مسوّل عنه (BSD-3 كما في الأصل) في
+> `jais_voice/_vendor/torchtune`.
 
 ## ملاحظات
 - إعدادات كل شيء عبر متغيرات البيئة (`.env.example`)؛ الافتراضات مضبوطة لكرت 16GB مثل T4.

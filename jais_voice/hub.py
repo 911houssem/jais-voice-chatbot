@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,18 @@ import torch
 from loguru import logger
 
 from .config import ASR_REPO, ASR_REPO_AWQ, JaisConfig
+
+# --- torchtune stub ------------------------------------------------------
+# neucodec does ``from torchtune.modules import RotaryPositionalEmbeddings``.
+# The real torchtune package hard-requires torchao and friends at import time,
+# which makes pip resolution fragile (heavy, version-coupled wheels). We ship
+# a minimal vendored stub with the same class (BSD-3, see _vendor note) and
+# prepend it to sys.path so ``import torchtune`` resolves here FIRST, before
+# neucodec is imported anywhere in this process.
+_VENDOR_DIR = Path(__file__).resolve().parent / "_vendor"
+if str(_VENDOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_VENDOR_DIR))
+# -------------------------------------------------------------------------
 
 # Built-in demo voices published on the Audar-TTS model card. Clips live at:
 # https://huggingface.co/audarai/Audar-TTS-V1-Flash/resolve/main/samples/<id>_source.wav
